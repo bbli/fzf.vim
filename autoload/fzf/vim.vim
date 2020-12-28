@@ -269,11 +269,19 @@ function! s:buflisted()
   return filter(range(1, bufnr('$')), 'buflisted(v:val) && getbufvar(v:val, "&filetype") != "qf"')
 endfunction
 
+" opts:
+"   * dict with the following options:
+"   * source-list of everything that we will filter from
+"   * sink-function ref that takes lines
+" name
+" extra= just a bang boolean for search_history function, but for file history
+" it becomes the options for the preview -> frontend options
 function! s:fzf(name, opts, extra)
   call s:check_requirements()
 
   let [extra, bang] = [{}, 0]
   if len(a:extra) <= 1
+      " gets first element in list
     let first = get(a:extra, 0, 0)
     if type(first) == s:TYPE.dict
       let extra = first
@@ -544,23 +552,54 @@ function! s:history_source(type)
     \ map(list, 'printf(fmt, len(list) - v:key)." ".v:val'))
 endfunction
 
+" Almost like macros
 nnoremap <plug>(-fzf-vim-do) :execute g:__fzf_command<cr>
 nnoremap <plug>(-fzf-/) /
 nnoremap <plug>(-fzf-:) :
 
+" Assumes we are in normal mode
 function! s:history_sink(type, lines)
   if len(a:lines) < 2
     return
   endif
 
   let prefix = "\<plug>(-fzf-".a:type.')'
-  let key  = a:lines[0]
-  let item = matchstr(a:lines[1], ' *[0-9]\+ *\zs.*')
+  let key  = a:lines[1]
+
+  " Prepares 'items' and 'print_query' variables to be conditionally used based on mode we chose
+  let print_query = a:lines[0]
+  if len(a:lines) > 2
+      " to filter away part of the terminal match
+      let item = matchstr(a:lines[2], ' *[0-9]\+ *\zs.*')
+  else
+      let item = ''
+  endif
+
+  " Q: why would the first line be ctrl-e?
+  " A: we add as command line option into fzf#run
+  " CASE 1: EDIT MODE
   if key == 'ctrl-e'
+    "if item == ''
+        "return
+    "endif
+      " adds to search history then runs / + up to get the 'last' search entry
     call histadd(a:type, item)
     redraw
     call feedkeys(a:type."\<up>", 'n')
+  " CASE 4: FORCED INPUT MODE
+  elseif key == 'ctrl-f'
+    let command = a:type . print_query . "\<cr>"
+    call feedkeys(command,'n')
+  " CASE 3: EDIT FORCE INPUT MODE
+  elseif key == 'ctrl-c'
+    call histadd(a:type, print_query)
+    redraw
+    call feedkeys(a:type."\<up>", 'n')
+  " CASE 2: DEFAULT SELECTION MODE
   else
+    "if item == ''
+        "return
+    "endif
     if a:type == ':'
       call histadd(a:type, item)
     endif
@@ -577,7 +616,7 @@ function! fzf#vim#command_history(...)
   return s:fzf('history-command', {
   \ 'source':  s:history_source(':'),
   \ 'sink*':   s:function('s:cmd_history_sink'),
-  \ 'options': '+m --ansi --prompt="Hist:> " --header-lines=1 --expect=ctrl-e --tiebreak=index'}, a:000)
+  \ 'options': '+m --ansi --prompt="Hist:> " --header-lines=1 --expect=ctrl-e --expect=ctrl-f --expect=ctrl-c --tiebreak=index --print-query'}, a:000)
 endfunction
 
 function! s:search_history_sink(lines)
@@ -588,10 +627,11 @@ function! fzf#vim#search_history(...)
   return s:fzf('history-search', {
   \ 'source':  s:history_source('/'),
   \ 'sink*':   s:function('s:search_history_sink'),
-  \ 'options': '+m --ansi --prompt="Hist/> " --header-lines=1 --expect=ctrl-e --tiebreak=index'}, a:000)
+  \ 'options': '+m --ansi --prompt="Hist/> " --header-lines=1 --expect=ctrl-e --expect=ctrl-f --expect=ctrl-c --tiebreak=index --print-query'}, a:000)
 endfunction
 
 function! fzf#vim#history(...)
+    " Q: why doesn't vim#history have a sink handler?
   return s:fzf('history-files', {
   \ 'source':  fzf#vim#_recent_files(),
   \ 'options': ['-m', '--header-lines', !empty(expand('%')), '--prompt', 'Hist> ']
